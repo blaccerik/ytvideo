@@ -97,14 +97,14 @@ class Video:
         else:
             self.songs[band] = {song}
         with codecs.open(self.songs_file, "a", "utf-8") as file:
-            file.write(f"{song} -- {band}\n")
+            file.write(f"\n{song} -- {band}")
         return False
 
     def add_to_banned_bands(self, band):
         if band is not None:
             self.banned_bands.add(band)
             with codecs.open(self.banned_bands_file, "a", "utf-8") as file:
-                file.write(f"{band}\n")
+                file.write(f"\n{band}")
         print(f"added {band} to banned bands")
 
     def dislike(self, link):
@@ -236,8 +236,10 @@ class Video:
             else:
                 print(f"{band} -- {song} [{count}/3]")
             n = 1000
+            times = 0
             if value is False:
                 while True:
+                    times += 1
                     n -= 1
                     if n <= 0:
                         num2 = 2
@@ -254,6 +256,8 @@ class Video:
                         b2 = b
                         vid_id = url.split("=")
                         self.dislike(vid_id[1])
+                        with codecs.open(self.songs_file, "a", "utf-8") as file:
+                            file.write(f" -- {times}")
                         elem = driver.find_element_by_xpath('//*[@class="ytp-next-button ytp-button"]')
                         elem.click()
                         break
@@ -283,12 +287,13 @@ class Video:
                 elem = driver.find_element_by_xpath('//*[@class="ytp-next-button ytp-button"]')
                 elem.click()
             last_url = url
-            time.sleep(1)
+            time.sleep(1.5)
 
 if __name__ == "__main__":
     v = Video(r"C:\Users\theerik\PycharmProjects\ytvideo\key.txt",
               r"C:\Users\theerik\PycharmProjects\ytvideo\bannedbands.txt",
               r"C:\Users\theerik\PycharmProjects\ytvideo\bannedwords.txt",
               r"C:\Users\theerik\PycharmProjects\ytvideo\songs.txt")
+    print("loaded")
     link = str(input("link: "))
     v.playlist_link(link)
