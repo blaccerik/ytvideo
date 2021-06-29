@@ -5,16 +5,11 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 import time
 import win32api
-# import uiautomation as auto
-# import codecs
-# import win32api
-# import googleapiclient.discovery
 import pickle
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import InstalledAppFlow
 import os.path
 from googleapiclient.discovery import build
-# import re
 
 class Youtube:
     def __init__(self, link, songslink, bannedbandslink, bannedwordslink, adblocklink, unknownlink):
@@ -33,6 +28,7 @@ class Youtube:
         self.bannedwords = self.read_from_file(bannedwordslink, make_list=True)
         self.creds = self.register(r'C:\Users\theerik\PycharmProjects\ytvideo\credentials.json')
         self.key = self.read_from_file(r"C:\Users\theerik\PycharmProjects\ytvideo\key.txt")
+        self.playlist_link = self.read_from_file(r"C:\Users\theerik\PycharmProjects\ytvideo\playlist_id.txt")
         self.youtube = build("youtube", "v3", credentials=self.creds)
         self.service = build("youtube", "v3", developerKey=self.key)
         self.ydl = youtube_dl.YoutubeDL({})
@@ -45,8 +41,6 @@ class Youtube:
                 i = i.replace("\n", "").lower()
                 song = i.split(" -- ")[0]
                 band = i.split(" -- ")[1]
-                # if "(" in song:
-                #     print(song, band)
                 if band not in self.songs:
                     self.songs[band] = {song}
                     self.bands.add(band)
@@ -75,9 +69,6 @@ class Youtube:
             # Save the credentials for the next run
             with open(token_link, 'wb') as token:
                 pickle.dump(creds, token)
-        # ei saa aru miks see siin on
-        # with open(r'C:\Users\theerik\PycharmProjects\ytvideo\token.pickle', 'rb') as token:
-        #     creds = pickle.load(token)
         return creds
 
     def log_in(self, driver):
@@ -87,15 +78,18 @@ class Youtube:
         time.sleep(0.5)
         # sign in
         driver.get("https://accounts.google.com/signin")
+        time.sleep(0.5)
         driver.switch_to.window(driver.window_handles[1])
+        time.sleep(0.5)
         driver.close()
+        time.sleep(0.5)
         driver.switch_to.window(driver.window_handles[0])
         time.sleep(0.5)
         email_phone = driver.find_element_by_xpath("//input[@id='identifierId']")
         email_phone.send_keys(self.name)
         driver.find_element_by_id("identifierNext").click()
         time.sleep(2)
-        password = WebDriverWait(driver, 5).until(
+        password = WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable((By.XPATH, "//input[@name='password']"))
         )
         password.send_keys(self.password)
@@ -140,19 +134,15 @@ class Youtube:
             print("cant dislike for some reason")
 
     def add_to_playlist(self, id):
-        # kui video on vähemalt 2 min kestnud
-        # youtube = googleapiclient.discovery.build("youtube", "v3", credentials=self.creds)
-        # self.youtube
-        playlist_link = "PL5jlSbUnZfpLH8Agff5wYyNGlFqTJfV0K"
+        playlist_link = self.playlist_link
         request = self.youtube.playlistItems().insert(
             part="snippet",
             body={'snippet': {'playlistId': playlist_link, 'resourceId': {'kind': 'youtube#video', 'videoId': id}}})
-        print(request.execute())
-        # try:
-        #     print(request.execute())
-        #     print("added to playlist")
-        # except:
-        #     print("is in playlist")
+        try:
+            request.execute()
+            print("added to playlist")
+        except:
+            print("is in playlist")
 
     def rating(self, id):
         request = self.youtube.videos().getRating(id=id)
@@ -174,7 +164,7 @@ class Youtube:
         """
         Get api of the video
         :param video_id: Video id for example "fjhryr854" and NOT the full url
-        :return: song, band, should skip, reason for skip
+        :return: should skip, should dislike, found, song, band
         """
         res = self.rating(video_id)
         if res:
@@ -185,20 +175,20 @@ class Youtube:
             desc = bytes(vid_response["description"], "utf-8").decode('utf-8', 'ignore')
             title = title.lower()
             if self.title_has_banned_word(title):
-                return True, False
+                return True, True, False
             info = self.song_info(title, desc, video_id)
             found = info[0]
             if found:
                 song = info[1]
                 band = info[2]
                 skip = self.should_skip_song(song, band)
-                return skip, True, song, band
+                return skip, True, True, song, band
             else:
                 song = info[1]
                 self.song_not_found(song, video_id)
-                return False, False, song
+                return False, True, False, song
         else:
-            return True, False
+            return True, False, False
 
     def title_has_banned_word(self, title):
         """
@@ -222,16 +212,10 @@ class Youtube:
         if band in self.bands:
             if song in self.songs[band]:
                 return True
-        else:
-            return False
+        return False
 
     def song_info(self, title, desc, link):
         """
-        filtreeri paremini nimi ära, isegi kui tuleb official youtube songist
-        nt: nimi (midagi) siis eemalda sulud ära
-        ning saa paremini aru mis bänd on
-        äkki tee eraldi fail ja pane sinna ning siis ma pärast otsustan vms
-        või kui saab uue bändi teada siis kontrollib sealt
         :param title:
         :param desc:
         :param link:
@@ -271,25 +255,28 @@ class Youtube:
                 return found, song, band
 
         with self.ydl:
-            video = self.ydl.extract_info(link, download=False)
-            if video['artist']:
-                band = video['artist'].lower()
-                song = video["track"].lower()
-                song = self.fix_song_name(song)
-                band = self.fix_song_name(band)
-                while band[0].isalpha() is False:
-                    band = band[1:]
-                while song[0].isalpha() is False:
-                    song = song[1:]
-                found = True
-                return found, song, band
+            try:
+                video = self.ydl.extract_info(link, download=False)
+                if video['artist']:
+                    band = video['artist'].lower()
+                    song = video["track"].lower()
+                    song = self.fix_song_name(song)
+                    band = self.fix_song_name(band)
+                    while band[0].isalpha() is False:
+                        band = band[1:]
+                    while song[0].isalpha() is False:
+                        song = song[1:]
+                    found = True
+                    return found, song, band
+            except:
+                print("Coudln't download")
         return found, title
 
     def skip(self, driver):
         element = driver.find_element_by_xpath('//*[@class="ytp-next-button ytp-button"]')
         element.click()
 
-    def add_to_songs(self, song, band):
+    def add_to_songs_lists(self, song, band, time):
         if not self.should_skip_song(song, band):
             if band not in self.bands:
                 self.bands.add(band)
@@ -297,7 +284,8 @@ class Youtube:
             else:
                 self.songs[band].add(song)
             with open(self.songslink, "a", encoding="utf-8") as file:
-                file.write(f"\n{song} -- {band}")
+                file.write(f"\n{song} -- {band} -- {time}")
+        pass
 
     def add_to_banned_bands(self, band):
         if band is not None:
@@ -306,77 +294,86 @@ class Youtube:
                 file.write(f"\n{band}")
         print(f"added {band} to banned bands")
 
-    def main(self, link):
+    def main(self, driver,  link):
         """
-        M ------
-          kasuta apid et dislikida ja infot video kohta saada nt nimi jne
-          vaata kui on dislike olemas siis skip (ei tea kas saab kontrollida)
-          iga x loo tagant äkki vaata mis reccomended lood on ning pane nendele mis on stored remove
-          keypress võiks kuidagi paremini detectida ning time arvutada ning ka see et kui palju loost olen kuulanud
-          nt võtad loo pikkuse ja 3/4 sellest vms
-          ning kui on lisatud siis lihtsalt update kiiremini et vaatata kas tuli uus lugu nt iga 10 sec tagant
-          NING ka detecti kas läks main radio loopist välja ning siis lähed tagasi
         :param link:
         :return:
         """
-        driver = webdriver.Firefox()
-        self.log_in(driver)
+        # driver = webdriver.Firefox()
+        # self.log_in(driver)
         time.sleep(0.5)
         driver.get(link)
         input("Press any key")
         last_id = None
         wrote = False
+        # text = ""
+        # song_time = -1
+        total_time = -1
         while True:
+            # print(total_time)
             url = driver.current_url
+
+            # check if url is wrong size
+            if len(url) <= 43:
+                last_id = None
+                wrote = False
+                driver.get(link)
+                time.sleep(1)
+                continue
             url = url[:43]
             id = url[32:]
-            # print(wrote)
+
+            # check if needs to cather data
             if last_id != id:
+                # write if url changed and it the song wasn't recorded
                 if wrote:
-                    with open(self.songslink, "a", encoding="utf-8") as file:
-                        file.write(f" -- {time_listened}")
-                    wrote = False
+                    self.add_to_songs_lists(song, band, total_time)
+                total_time = -1
                 data = self.get_video_api(id)
                 skip = data[0]
-                found = data[1]
+                dislike = data[1]
+                found = data[2]
                 nth_time = 1
-                time_listened = 0
             time.sleep(0.5)
+
+            # if needs to skip the song
             if skip:
                 if found:
-                    song = data[2]
-                    band = data[3]
+                    song = data[3]
+                    band = data[4]
                     title = f"{song} -- {band}"
                     print(f"[SONG SKIPPED] {title}")
                 else:
                     band = None
                     print(f"[SONG SKIPPED]")
-                self.dislike(id)
+                if dislike:
+                    self.dislike(id)
                 self.skip(driver)
             else:
                 if found:
-                    song = data[2]
-                    band = data[3]
+                    song = data[3]
+                    band = data[4]
                     title = f"{song} -- {band}"
-                    self.add_to_songs(song, band)
                     wrote = True
                 else:
                     band = None
-                    title = data[2]
-                print(f"{title} -- [{nth_time}/3]")
-                if nth_time == 3:
+                    title = data[3]
+                print(f"{title} -- [{nth_time}/5]")
+                if nth_time == 5:
                     self.add_to_playlist(id)
                 nth_time += 1
                 n = 0
                 time.sleep(1)
-                while n < 60:
+
+                # play song for 30 seconds
+                while n < 300:
                     n += 1
-                    time_listened += 1
+                    total_time += 1
                     pause = win32api.GetKeyState(0x13)  # pause/break
                     num = win32api.GetKeyState(0x90)  # numlock
                     if pause < 0:
-                        with open(self.songslink, "a", encoding="utf-8") as file:
-                            file.write(f" -- {time_listened}")
+                        if found:
+                            self.add_to_songs_lists(song, band, total_time)
                         wrote = False
                         self.dislike(id)
                         self.skip(driver)
@@ -387,7 +384,7 @@ class Youtube:
                         self.add_to_banned_bands(band)
                         self.skip(driver)
                         break
-                    time.sleep(0.1)
+                    time.sleep(0.09)
             last_id = id
             time.sleep(1)
 
@@ -398,39 +395,8 @@ if __name__ == "__main__":
                 r"C:\Users\theerik\PycharmProjects\ytvideo\bannedwords.txt",
                 r'C:\Users\theerik\PycharmProjects\ytvideo\adblock.xpi',
                 r'C:\Users\theerik\PycharmProjects\ytvideo\not_found_songs.txt')
-    link = "https://www.youtube.com/watch?v=V0g6AQ3kD8Q&list=RDV0g6AQ3kD8Q&start_radio=1&rv=V0g6AQ3kD8Q&t=2"
-    response = str(input("Last? [y]: "))
-    if response != "y":
-        link = response
-    y.main(link)
-    
-    # print(y.fix_song_name("erik() erik"))
-    # print(y.fix_song_name("erikxx (Composite Edit (do not put on a/w))"))
-    # print(y.fix_song_name("(aaa) erik (bb(ccc)bb)"))
-    # print(y.fix_song_name("erik [Composite Edit [do not put on a/w]]"))
-    # print(y.fix_song_name("[aaa] erik [bb[ccc]bb]"))
-
-    # print(y.get_video_api("e4UKtfiX_wM"))
-    # y.add_to_playlist("e4UKtfiX_wM")
-    # print(y.add_to_songs('monsters', 'all time low'))
-
-    # print(y.get_video_api("e4UKtfiX_wM"))
-    # print(y.get_video_api("nLmiLR9lPf4"))
-    # print(y.get_video_api("lz7JFCVPL9s"))
-    # print(y.get_video_api("DHMCqPH7ksQ"))
-    # print(y.get_video_api("1dcXmkco5ko"))
-    # print(y.get_video_api("6jeV9szFyUY"))
-    # print(y.get_video_api("y9aecCCxlnc"))
-
-    # y.dislike("uMme1L7bvj4")
-
-    # title = bytes("erikk(erikkkk) - test1(42443)", "utf-8").decode('utf-8', 'ignore')
-    # print(title)
-    # print(y.song_info("Nightcore - Ievan Polkka (VSNS Remix)", "text", "QwdbFNGCkLw"))
-
-    # print(y.add("gold","imagine dragons", 123))
-    # print(y.add("gold2", "imagine dragons2", 123))
-    # print(y.video("Goodbye - Imagine dragons", "imagine dragons"))
-    # print(y.fix_song_name("ero(deee)le(eeee)(wewe)[ewewew]"))
-    # y.video("Imagine dragons - Goodbye", "imagine dragons")
-    # y.main("https://www.google.com/")
+    driver = webdriver.Firefox()
+    y.log_in(driver)
+    response = str(input("Link: "))
+    link = response
+    y.main(driver, link)
